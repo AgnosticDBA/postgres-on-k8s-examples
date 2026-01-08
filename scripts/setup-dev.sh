@@ -66,8 +66,8 @@ echo "ℹ️  For now, we'll create a test database directly with Percona operat
 # Skip controller build for now - controller needs to be deployed separately
 echo "ℹ️  Controller deployment skipped - CRD is available for manual testing"
 
-# Create example database
-echo "🗄️  Creating example PostgresDatabase..."
+# Create example PostgresDatabase CR (for testing when controller is deployed)
+echo "🗄️  Creating example PostgresDatabase CR (controller required to process)..."
 cat <<EOF | kubectl apply -f -
 apiVersion: databases.mycompany.com/v1
 kind: PostgresDatabase
@@ -82,34 +82,22 @@ spec:
   monitoring: false
 EOF
 
-# Wait for database to be ready
-echo "⏳ Waiting for example database to be ready..."
-for i in {1..30}; do
-    if kubectl get postgresdatabase example-db -o jsonpath='{.status.phase}' | grep -q "Ready"; then
-        echo "✅ Example database is ready!"
-        break
-    fi
-    if [ $i -eq 30 ]; then
-        echo "❌ Example database failed to become ready"
-        kubectl get postgresdatabase example-db -o yaml
-        exit 1
-    fi
-    echo "⏳ Waiting for database... ($i/30)"
-    sleep 10
-done
+echo "ℹ️  PostgresDatabase CR created - it will remain pending until the controller is deployed"
 
-# Show connection information
+# Show status
 echo ""
 echo "🎉 PostgreSQL DBaaS Development Environment is ready!"
 echo ""
 echo "📊 Status:"
-kubectl get postgresdatabases.databases.mycompany.com || echo "No PostgresDatabase resources found"
+kubectl get postgresdatabases.databases.mycompany.com
 kubectl get pods -n percona-postgresql-operator
 echo ""
-echo "ℹ️  Note: The postgres-database-controller needs to be deployed separately to handle PostgresDatabase resources"
+echo "ℹ️  Next steps:"
+echo "   1. Deploy the postgres-database-controller to handle PostgresDatabase resources"
+echo "   2. Then the example-db will be processed and become ready"
 echo ""
-echo "🔗 To connect to the example database:"
-echo "kubectl port-forward svc/example-db 5432:5432 &"
-echo "PGPASSWORD=\$(kubectl get secret example-db-credentials -o jsonpath='{.data.password}' | base64 -d) psql -h localhost -U postgres -d example_db"
+echo "🔧 To deploy the controller:"
+echo "   cd ../postgres-database-controller"
+echo "   ./scripts/deploy.sh"
 echo ""
 echo "📖 See DEVELOPER_GUIDE.md for more information"
