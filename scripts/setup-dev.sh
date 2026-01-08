@@ -63,17 +63,8 @@ echo "🏗️  Building and deploying postgres-database-controller..."
 echo "⚠️  Note: Controller source code in separate repository: https://github.com/AgnosticDBA/postgres-database-controller"
 echo "ℹ️  For now, we'll create a test database directly with Percona operator..."
 
-# Skip controller build for now and create test database directly
-echo "🗄️  Creating test database with Percona operator..."
-cd ..
-
-# Wait for controller to be ready
-echo "⏳ Waiting for postgres-database-controller to be ready..."
-kubectl wait --for=condition=available --timeout=180s deployment/postgres-database-controller -n postgres-database-system || {
-    echo "❌ postgres-database-controller failed to become ready"
-    kubectl get pods -n postgres-database-system
-    exit 1
-}
+# Skip controller build for now - controller needs to be deployed separately
+echo "ℹ️  Controller deployment skipped - CRD is available for manual testing"
 
 # Create example database
 echo "🗄️  Creating example PostgresDatabase..."
@@ -112,9 +103,10 @@ echo ""
 echo "🎉 PostgreSQL DBaaS Development Environment is ready!"
 echo ""
 echo "📊 Status:"
-kubectl get postgresdatabases
-kubectl get pods -n postgres-database-system
+kubectl get postgresdatabases.databases.mycompany.com || echo "No PostgresDatabase resources found"
 kubectl get pods -n percona-postgresql-operator
+echo ""
+echo "ℹ️  Note: The postgres-database-controller needs to be deployed separately to handle PostgresDatabase resources"
 echo ""
 echo "🔗 To connect to the example database:"
 echo "kubectl port-forward svc/example-db 5432:5432 &"
