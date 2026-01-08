@@ -72,7 +72,19 @@ fi
 # Build controller image
 echo "🔨 Building controller image..."
 cd ../postgres-database-controller
-docker build -t postgres-database-controller:latest .
+
+# Detect platform and build accordingly
+if [[ "$(uname -m)" == "arm64" ]]; then
+    echo "🍎 Building for ARM64 (Apple Silicon)..."
+    # Update Dockerfile for ARM64
+    sed -i.bak 's/GOARCH=amd64/GOARCH=arm64/' Dockerfile
+    docker build -t postgres-database-controller:latest .
+    # Restore Dockerfile
+    mv Dockerfile.bak Dockerfile
+else
+    echo "🖥️ Building for AMD64 (Intel/CI)..."
+    docker build -t postgres-database-controller:latest .
+fi
 
 # Load image into Kind cluster
 echo "📦 Loading image into Kind cluster..."
