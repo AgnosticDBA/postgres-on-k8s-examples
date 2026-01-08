@@ -1,0 +1,11 @@
+apiVersion: databases.mycompany.com/v1
+kind: PostgresDatabase
+metadata:
+  name: example-db
+  namespace: default
+spec:
+  version: 17
+  replicas: 1
+  storage: 5Gi
+  backup: false
+  monitoring: false

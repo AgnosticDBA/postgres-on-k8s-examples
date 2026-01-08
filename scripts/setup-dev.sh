@@ -76,7 +76,7 @@ docker build -t postgres-database-controller:latest .
 
 # Load image into Kind cluster
 echo "📦 Loading image into Kind cluster..."
-kind load docker-image postgres-database-controller:latest
+kind load docker-image postgres-database-controller:latest --name postgres-dbaas
 
 # Deploy controller
 echo "🚀 Deploying controller..."
