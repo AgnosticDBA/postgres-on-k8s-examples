@@ -1,0 +1,113 @@
+name: Database Migration and Seeding
+
+on:
+  push:
+    branches: [ main, develop ]
+    paths: [ 'examples/database/**' ]
+  workflow_dispatch:
+  schedule:
+    # Run daily at 2 AM UTC
+    - cron: '0 2 * * *'
+
+jobs:
+  migrate:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Setup PostgreSQL Client
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y postgresql-client
+        
+    - name: Setup kubectl
+      uses: azure/setup-kubectl@v3
+      with:
+        version: 'v1.28.0'
+        
+    - name: Configure kubectl
+      run: |
+        mkdir -p $HOME/.kube
+        echo "$KUBECONFIG" | base64 -d > $HOME/.kube/config
+        chmod 600 $HOME/.kube/config
+        
+    - name: Get database connection details
+      id: db-connection
+      run: |
+        PRIMARY_SERVICE=$(kubectl get postgrescluster hippo -n postgres-demo -o jsonpath='{.status.primaryService}' 2>/dev/null || echo "")
+        if [ -z "$PRIMARY_SERVICE" ]; then
+          echo "service=postgres-primary" >> $GITHUB_OUTPUT
+        else
+          echo "service=$PRIMARY_SERVICE" >> $GITHUB_OUTPUT
+        fi
+        
+    - name: Port-forward to database
+      run: |
+        kubectl port-forward -n postgres-demo svc/${{ steps.db-connection.outputs.service }} 5432:5432 &
+        echo $! > pf.pid
+        sleep 10
+        
+    - name: Run database migrations
+      run: |
+        PGPASSWORD="example-password" psql -h localhost -U postgres -d postgres -f examples/database/init.sql
+        
+    - name: Seed sample data
+      run: |
+        PGPASSWORD="example-password" psql -h localhost -U postgres -d demo_app -f examples/database/sample-data.sql
+        
+    - name: Verify data
+      run: |
+        echo "=== Users ==="
+        PGPASSWORD="example-password" psql -h localhost -U postgres -d demo_app -c "SELECT COUNT(*) as user_count FROM users;"
+        echo ""
+        echo "=== Tasks ==="
+        PGPASSWORD="example-password" psql -h localhost -U postgres -d demo_app -c "SELECT COUNT(*) as task_count FROM tasks;"
+        echo ""
+        echo "=== Categories ==="
+        PGPASSWORD="example-password" psql -h localhost -U postgres -d demo_app -c "SELECT COUNT(*) as category_count FROM categories;"
+        
+    - name: Clean up port-forward
+      if: always()
+      run: |
+        if [ -f pf.pid ]; then
+          kill $(cat pf.pid) || true
+          rm pf.pid
+        fi
+
+  backup:
+    runs-on: ubuntu-latest
+    needs: migrate
+    if: github.event_name == 'schedule'
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Setup kubectl
+      uses: azure/setup-kubectl@v3
+      with:
+        version: 'v1.28.0'
+        
+    - name: Configure kubectl
+      run: |
+        mkdir -p $HOME/.kube
+        echo "$KUBECONFIG" | base64 -d > $HOME/.kube/config
+        chmod 600 $HOME/.kube/config
+        
+    - name: Create manual backup
+      run: |
+        kubectl create -f - <<EOF
+        apiVersion: postgres-operator.crunchydata.com/v1beta1
+        kind: PostgresBackup
+        metadata:
+          name: manual-backup-$(date +%Y%m%d-%H%M%S)
+          namespace: postgres-demo
+        spec:
+          pgCluster: hippo
+        EOF
+        
+    - name: List recent backups
+      run: |
+        kubectl get postgresbackup -n postgres-demo --sort-by=.metadata.creationTimestamp

@@ -1,0 +1,100 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: postgres-init-scripts
+  namespace: postgres-demo
+data:
+  01-init.sql: |
+    -- Database initialization script
+    CREATE DATABASE IF NOT EXISTS demo_app;
+    
+    -- Create user for the application
+    CREATE USER IF NOT EXISTS demo_app_user WITH PASSWORD 'secure_password_123';
+    
+    -- Connect to the demo database
+    \c demo_app;
+    
+    -- Enable required extensions
+    CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
+    
+    -- Create tables
+    CREATE TABLE IF NOT EXISTS users (
+        id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+        username VARCHAR(50) UNIQUE NOT NULL,
+        email VARCHAR(100) UNIQUE NOT NULL,
+        password_hash VARCHAR(255) NOT NULL,
+        created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+    );
+    
+    CREATE TABLE IF NOT EXISTS tasks (
+        id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+        title VARCHAR(200) NOT NULL,
+        description TEXT,
+        status VARCHAR(20) DEFAULT 'pending' CHECK (status IN ('pending', 'in_progress', 'completed')),
+        priority VARCHAR(10) DEFAULT 'medium' CHECK (priority IN ('low', 'medium', 'high', 'urgent')),
+        user_id UUID REFERENCES users(id) ON DELETE CASCADE,
+        due_date TIMESTAMP WITH TIME ZONE,
+        created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+    );
+    
+    CREATE TABLE IF NOT EXISTS categories (
+        id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+        name VARCHAR(50) UNIQUE NOT NULL,
+        color VARCHAR(7) DEFAULT '#007bff',
+        created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+    );
+    
+    CREATE TABLE IF NOT EXISTS task_categories (
+        task_id UUID REFERENCES tasks(id) ON DELETE CASCADE,
+        category_id UUID REFERENCES categories(id) ON DELETE CASCADE,
+        PRIMARY KEY (task_id, category_id)
+    );
+    
+    -- Create indexes
+    CREATE INDEX IF NOT EXISTS idx_tasks_user_id ON tasks(user_id);
+    CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status);
+    CREATE INDEX IF NOT EXISTS idx_tasks_priority ON tasks(priority);
+    CREATE INDEX IF NOT EXISTS idx_tasks_due_date ON tasks(due_date);
+    CREATE INDEX IF NOT EXISTS idx_users_username ON users(username);
+    CREATE INDEX IF NOT EXISTS idx_users_email ON users(email);
+    
+    -- Grant permissions to the application user
+    GRANT ALL PRIVILEGES ON DATABASE demo_app TO demo_app_user;
+    GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA public TO demo_app_user;
+    GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA public TO demo_app_user;
+    
+    -- Set default privileges for future objects
+    ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TABLES TO demo_app_user;
+    ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON SEQUENCES TO demo_app_user;
+
+  02-sample-data.sql: |
+    -- Sample data for testing and demonstration
+    \c demo_app;
+    
+    -- Insert sample users
+    INSERT INTO users (username, email, password_hash) VALUES 
+        ('alice_johnson', 'alice@example.com', '$2b$12$LQv3c1yqBWVHxkd0LHAkCOYz6TtxMQJqhN8/LewdBPj6QJw/2Ej7W'),
+        ('bob_smith', 'bob@example.com', '$2b$12$LQv3c1yqBWVHxkd0LHAkCOYz6TtxMQJqhN8/LewdBPj6QJw/2Ej7W'),
+        ('charlie_brown', 'charlie@example.com', '$2b$12$LQv3c1yqBWVHxkd0LHAkCOYz6TtxMQJqhN8/LewdBPj6QJw/2Ej7W')
+    ON CONFLICT (username) DO NOTHING;
+    
+    -- Insert sample categories
+    INSERT INTO categories (name, color) VALUES 
+        ('Work', '#dc3545'),
+        ('Personal', '#28a745'),
+        ('Shopping', '#ffc107'),
+        ('Health', '#17a2b8'),
+        ('Learning', '#6f42c1')
+    ON CONFLICT (name) DO NOTHING;
+    
+    -- Insert sample tasks
+    INSERT INTO tasks (title, description, status, priority, user_id, due_date) VALUES 
+        ('Complete quarterly report', 'Finish the Q4 financial report', 'in_progress', 'high', 
+         (SELECT id FROM users WHERE username = 'alice_johnson'), CURRENT_TIMESTAMP + INTERVAL '2 days'),
+        ('Buy groceries', 'Get milk, eggs, bread, vegetables', 'pending', 'medium',
+         (SELECT id FROM users WHERE username = 'bob_smith'), CURRENT_TIMESTAMP + INTERVAL '1 day'),
+        ('Gym workout', 'Upper body strength training', 'completed', 'medium',
+         (SELECT id FROM users WHERE username = 'charlie_brown'), CURRENT_TIMESTAMP - INTERVAL '1 hour')
+    ON CONFLICT DO NOTHING;

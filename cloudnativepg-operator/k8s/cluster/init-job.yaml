@@ -1,0 +1,164 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: database-init
+  namespace: postgres-demo
+  labels:
+    app: database-init
+spec:
+  template:
+    metadata:
+      labels:
+        app: database-init
+    spec:
+      restartPolicy: OnFailure
+      containers:
+      - name: postgres-init
+        image: postgres:16-alpine
+        env:
+        - name: PGHOST
+          value: hippo-cluster-rw.postgres-demo.svc.local
+        - name: PGPORT
+          value: "5432"
+        - name: PGUSER
+          valueFrom:
+            secretKeyRef:
+              name: postgres-credentials
+              key: username
+        - name: PGPASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: postgres-credentials
+              key: password
+        - name: PGDATABASE
+          value: postgres
+        command:
+        - /bin/bash
+        - -c
+        - |
+          # Wait for database to be ready
+          until psql -c "SELECT 1"; do
+            echo "Waiting for database to be ready..."
+            sleep 5
+          done
+          
+          echo "Database is ready. Initializing..."
+          
+          # Create database and user
+          psql -c "CREATE DATABASE demo_app;"
+          psql -c "CREATE USER demo_app_user WITH PASSWORD 'secure_password_123';"
+          
+          # Connect to demo_app database
+          export PGDATABASE=demo_app
+          
+          # Enable extensions
+          psql -c "CREATE EXTENSION IF NOT EXISTS \"uuid-ossp\";"
+          
+          # Apply schema (mounted as config map)
+          psql -f /scripts/schema.sql
+          
+          # Apply sample data
+          psql -f /scripts/sample-data.sql
+          
+          echo "Database initialization completed!"
+        volumeMounts:
+        - name: init-scripts
+          mountPath: /scripts
+          readOnly: true
+      volumes:
+      - name: init-scripts
+        configMap:
+          name: postgres-init-scripts
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: postgres-init-scripts
+  namespace: postgres-demo
+data:
+  schema.sql: |
+    -- Database schema for demo application
+    CREATE TABLE IF NOT EXISTS users (
+        id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+        username VARCHAR(50) UNIQUE NOT NULL,
+        email VARCHAR(100) UNIQUE NOT NULL,
+        password_hash VARCHAR(255) NOT NULL,
+        created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE TABLE IF NOT EXISTS tasks (
+        id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+        title VARCHAR(200) NOT NULL,
+        description TEXT,
+        status VARCHAR(20) DEFAULT 'pending' CHECK (status IN ('pending', 'in_progress', 'completed')),
+        priority VARCHAR(10) DEFAULT 'medium' CHECK (priority IN ('low', 'medium', 'high', 'urgent')),
+        user_id UUID REFERENCES users(id) ON DELETE CASCADE,
+        due_date TIMESTAMP WITH TIME ZONE,
+        created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE TABLE IF NOT EXISTS categories (
+        id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+        name VARCHAR(50) UNIQUE NOT NULL,
+        color VARCHAR(7) DEFAULT '#007bff',
+        created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE TABLE IF NOT EXISTS task_categories (
+        task_id UUID REFERENCES tasks(id) ON DELETE CASCADE,
+        category_id UUID REFERENCES categories(id) ON DELETE CASCADE,
+        PRIMARY KEY (task_id, category_id)
+    );
+
+    -- Create indexes
+    CREATE INDEX IF NOT EXISTS idx_tasks_user_id ON tasks(user_id);
+    CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status);
+    CREATE INDEX IF NOT EXISTS idx_tasks_priority ON tasks(priority);
+    CREATE INDEX IF NOT EXISTS idx_tasks_due_date ON tasks(due_date);
+    CREATE INDEX IF NOT EXISTS idx_users_username ON users(username);
+    CREATE INDEX IF NOT EXISTS idx_users_email ON users(email);
+
+    -- Grant permissions to application user
+    GRANT ALL PRIVILEGES ON DATABASE demo_app TO demo_app_user;
+    GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA public TO demo_app_user;
+    GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA public TO demo_app_user;
+
+    -- Set default privileges for future objects
+    ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TABLES TO demo_app_user;
+    ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON SEQUENCES TO demo_app_user;
+
+  sample-data.sql: |
+    -- Sample data for demo application
+    INSERT INTO users (username, email, password_hash) VALUES 
+        ('alice_johnson', 'alice@example.com', '$2b$12$LQv3c1yqBWVHxkd0LHAkCOYz6TtxMQJqhN8/LewdBPj6QJw/2Ej7W'),
+        ('bob_smith', 'bob@example.com', '$2b$12$LQv3c1yqBWVHxkd0LHAkCOYz6TtxMQJqhN8/LewdBPj6QJw/2Ej7W'),
+        ('charlie_brown', 'charlie@example.com', '$2b$12$LQv3c1yqBWVHxkd0LHAkCOYz6TtxMQJqhN8/LewdBPj6QJw/2Ej7W'),
+        ('diana_prince', 'diana@example.com', '$2b$12$LQv3c1yqBWVHxkd0LHAkCOYz6TtxMQJqhN8/LewdBPj6QJw/2Ej7W'),
+        ('eve_wilson', 'eve@example.com', '$2b$12$LQv3c1yqBWVHxkd0LHAkCOYz6TtxMQJqhN8/LewdBPj6QJw/2Ej7W')
+    ON CONFLICT (username) DO NOTHING;
+
+    INSERT INTO categories (name, color) VALUES 
+        ('Work', '#dc3545'),
+        ('Personal', '#28a745'),
+        ('Shopping', '#ffc107'),
+        ('Health', '#17a2b8'),
+        ('Learning', '#6f42c1'),
+        ('Finance', '#fd7e14'),
+        ('Home', '#20c997'),
+        ('Social', '#e83e8c')
+    ON CONFLICT (name) DO NOTHING;
+
+    INSERT INTO tasks (title, description, status, priority, user_id, due_date) VALUES 
+        ('Complete quarterly report', 'Finish the Q4 financial report and submit to management', 'in_progress', 'high', 
+         (SELECT id FROM users WHERE username = 'alice_johnson'), CURRENT_TIMESTAMP + INTERVAL '2 days'),
+        ('Buy groceries', 'Get milk, eggs, bread, vegetables, and fruits for the week', 'pending', 'medium',
+         (SELECT id FROM users WHERE username = 'bob_smith'), CURRENT_TIMESTAMP + INTERVAL '1 day'),
+        ('Gym workout', 'Upper body strength training - chest, shoulders, triceps', 'completed', 'medium',
+         (SELECT id FROM users WHERE username = 'charlie_brown'), CURRENT_TIMESTAMP - INTERVAL '1 hour'),
+        ('Study Kubernetes', 'Complete chapter 5 of Kubernetes documentation', 'in_progress', 'medium',
+         (SELECT id FROM users WHERE username = 'diana_prince'), CURRENT_TIMESTAMP + INTERVAL '3 days'),
+        ('Pay utility bills', 'Pay electricity, water, and internet bills', 'pending', 'high',
+         (SELECT id FROM users WHERE username = 'eve_wilson'), CURRENT_TIMESTAMP + INTERVAL '5 hours')
+    ON CONFLICT DO NOTHING;

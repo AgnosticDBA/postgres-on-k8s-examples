@@ -1,0 +1,91 @@
+name: Deploy PostgreSQL Cluster
+
+on:
+  push:
+    branches: [ main, develop ]
+    paths: [ 'examples/k8s/**' ]
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Target environment'
+        required: true
+        default: 'dev'
+        type: choice
+        options:
+        - dev
+        - staging
+        - prod
+
+env:
+  KUBECONFIG: ${{ secrets.KUBE_CONFIG }}
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment: ${{ github.event.inputs.environment || 'dev' }}
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Setup kubectl
+      uses: azure/setup-kubectl@v3
+      with:
+        version: 'v1.28.0'
+        
+    - name: Configure kubectl
+      run: |
+        mkdir -p $HOME/.kube
+        echo "$KUBECONFIG" | base64 -d > $HOME/.kube/config
+        chmod 600 $HOME/.kube/config
+        
+    - name: Verify cluster connection
+      run: kubectl cluster-info
+      
+    - name: Create namespace
+      run: |
+        kubectl create namespace postgres-demo --dry-run=client -o yaml | kubectl apply -f -
+        
+    - name: Deploy PostgreSQL Operator
+      run: |
+        kubectl apply -f examples/k8s/operator/
+        
+    - name: Wait for operator to be ready
+      run: |
+        kubectl wait --for=condition=available --timeout=300s deployment/postgres-operator-controller-manager -n postgres-operator-system
+        
+    - name: Deploy PostgreSQL Cluster
+      run: |
+        kubectl apply -f examples/k8s/cluster/
+        
+    - name: Wait for database to be ready
+      run: |
+        kubectl wait --for=condition=ready --timeout=600s postgrescluster/hippo -n postgres-demo
+        
+    - name: Get connection info
+      run: |
+        echo "=== PostgreSQL Cluster Status ==="
+        kubectl get postgrescluster -n postgres-demo
+        echo ""
+        echo "=== Service Information ==="
+        kubectl get svc -n postgres-demo
+        echo ""
+        echo "=== Pod Information ==="
+        kubectl get pods -n postgres-demo
+        
+    - name: Test database connection
+      run: |
+        # Get the connection string
+        PRIMARY_SERVICE=$(kubectl get postgrescluster hippo -n postgres-demo -o jsonpath='{.status.primaryService}')
+        echo "Primary service: $PRIMARY_SERVICE"
+        
+        # Port-forward to test connection
+        kubectl port-forward -n postgres-demo svc/$PRIMARY_SERVICE 5432:5432 &
+        PF_PID=$!
+        sleep 10
+        
+        # Test connection
+        PGPASSWORD="example-password" psql -h localhost -U postgres -c "SELECT version();"
+        
+        # Clean up
+        kill $PF_PID
