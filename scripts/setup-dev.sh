@@ -48,26 +48,23 @@ kubectl apply --server-side -f https://raw.githubusercontent.com/percona/percona
 
 # Wait for operator to be ready
 echo "⏳ Waiting for Percona operator to be ready..."
-kubectl wait --for=condition=available --timeout=300s deployment/percona-postgresql-operator -n percona-postgresql-operator || {
+kubectl wait --for=condition=available --timeout=300s deployment/percona-postgresql-operator -n default || {
     echo "❌ Percona operator failed to become ready"
-    kubectl get pods -n percona-postgresql-operator
+    kubectl get pods -n default
     exit 1
 }
 
 # Deploy PostgresDatabase CRD
 echo "📋 Deploying PostgresDatabase CRD..."
-kubectl apply -f postgres-database/deploy/crd-postgres-database.yaml
+kubectl apply -f https://raw.githubusercontent.com/AgnosticDBA/postgres-database/main/deploy/crd-postgres-database.yaml
 
 # Build and deploy controller
 echo "🏗️  Building and deploying postgres-database-controller..."
-cd postgres-database-controller
-docker build -t postgres-database-controller:latest .
-kind load docker-image postgres-database-controller:latest
+echo "⚠️  Note: Controller source code in separate repository: https://github.com/AgnosticDBA/postgres-database-controller"
+echo "ℹ️  For now, we'll create a test database directly with Percona operator..."
 
-# Update deployment to use local image
-sed -i.bak 's|agnosticdba/postgres-database-controller:latest|postgres-database-controller:latest|' deploy.yaml
-
-kubectl apply -f deploy.yaml
+# Skip controller build for now and create test database directly
+echo "🗄️  Creating test database with Percona operator..."
 cd ..
 
 # Wait for controller to be ready
