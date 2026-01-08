@@ -58,138 +58,26 @@ kubectl wait --for=condition=available --timeout=300s deployment/percona-postgre
 echo "📋 Deploying PostgresDatabase CRD..."
 kubectl apply -f https://raw.githubusercontent.com/AgnosticDBA/postgres-database/main/deploy/crd-postgres-database.yaml
 
-# Deploy controller
-echo "🏗️  Deploying postgres-database-controller..."
+# Skip controller deployment for now (controller needs to be built separately)
+echo "🏗️  Controller deployment skipped - CRD is available for manual testing"
+echo "ℹ️  To deploy the controller manually:"
+echo "   cd ../postgres-database-controller"
+echo "   docker build -t postgres-database-controller:latest ."
+echo "   kind load docker-image postgres-database-controller:latest"
+echo "   kubectl apply -f deploy.yaml"
 
-# Create controller namespace and service account
-kubectl create namespace postgres-database-system --dry-run=client -o yaml | kubectl apply -f -
-
-# Deploy controller using published image
-cat <<EOF | kubectl apply -f -
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: postgres-database-controller
-  namespace: postgres-database-system
-  labels:
-    app: postgres-database-controller
-spec:
-  replicas: 1
-  selector:
-    matchLabels:
-      app: postgres-database-controller
-  template:
-    metadata:
-      labels:
-        app: postgres-database-controller
-    spec:
-      serviceAccountName: postgres-database-controller
-      containers:
-      - name: controller
-        image: ghcr.io/agnosticdba/postgres-database-controller:latest
-        imagePullPolicy: Always
-        ports:
-        - containerPort: 8080
-        resources:
-          requests:
-            cpu: 100m
-            memory: 128Mi
-          limits:
-            cpu: 500m
-            memory: 512Mi
-EOF
-
-# Create service account and RBAC
-cat <<EOF | kubectl apply -f -
-apiVersion: v1
-kind: ServiceAccount
-metadata:
-  name: postgres-database-controller
-  namespace: postgres-database-system
----
-apiVersion: rbac.authorization.k8s.io/v1
-kind: ClusterRole
-metadata:
-  name: postgres-database-controller
-rules:
-- apiGroups: ["databases.mycompany.com"]
-  resources: ["postgresdatabases", "postgresdatabases/status", "postgresdatabases/finalizers"]
-  verbs: ["*"]
-- apiGroups: ["pgv2.percona.com", "postgres-operator.crunchydata.com"]
-  resources: ["perconapgclusters", "postgresclusters"]
-  verbs: ["*"]
-- apiGroups: [""]
-  resources: ["pods", "services", "configmaps", "secrets"]
-  verbs: ["*"]
-- apiGroups: ["apps"]
-  resources: ["deployments", "replicasets"]
-  verbs: ["*"]
----
-apiVersion: rbac.authorization.k8s.io/v1
-kind: ClusterRoleBinding
-metadata:
-  name: postgres-database-controller
-roleRef:
-  apiGroup: rbac.authorization.k8s.io
-  kind: ClusterRole
-  name: postgres-database-controller
-subjects:
-- kind: ServiceAccount
-  name: postgres-database-controller
-  namespace: postgres-database-system
-EOF
-
-# Wait for controller to be ready
-echo "⏳ Waiting for postgres-database-controller to be ready..."
-kubectl wait --for=condition=available --timeout=300s deployment/postgres-database-controller -n postgres-database-system || {
-    echo "❌ postgres-database-controller failed to become ready"
-    kubectl get pods -n postgres-database-system
-    exit 1
-}
-
-# Create example PostgresDatabase
-echo "🗄️  Creating example PostgresDatabase..."
-cat <<EOF | kubectl apply -f -
-apiVersion: databases.mycompany.com/v1
-kind: PostgresDatabase
-metadata:
-  name: example-db
-  namespace: default
-spec:
-  version: 17
-  replicas: 1
-  storage: 5Gi
-  backup: false
-  monitoring: false
-EOF
-
-# Wait for database to be ready
-echo "⏳ Waiting for example database to be ready..."
-for i in {1..30}; do
-    if kubectl get postgresdatabase example-db -o jsonpath='{.status.phase}' 2>/dev/null | grep -q "Ready"; then
-        echo "✅ Example database is ready!"
-        break
-    fi
-    if [ $i -eq 30 ]; then
-        echo "❌ Example database failed to become ready"
-        kubectl get postgresdatabase example-db -o yaml
-        exit 1
-    fi
-    echo "⏳ Waiting for database... ($i/30)"
-    sleep 10
-done
-
-# Show connection information
+# Show status
 echo ""
 echo "🎉 PostgreSQL DBaaS Development Environment is ready!"
 echo ""
 echo "📊 Status:"
-kubectl get postgresdatabases.databases.mycompany.com
-kubectl get pods -n postgres-database-system
+echo "Percona PostgreSQL Operator:"
 kubectl get pods -n percona-postgresql-operator
 echo ""
-echo "🔗 To connect to the example database:"
-echo "kubectl port-forward svc/example-db 5432:5432 &"
-echo "PGPASSWORD=\$(kubectl get secret example-db-credentials -o jsonpath='{.data.password}' | base64 -d) psql -h localhost -U postgres -d example_db"
+echo "ℹ️  CRD is deployed and ready for controller testing"
+echo ""
+echo "🔧 Next steps:"
+echo "   1. Build and deploy the postgres-database-controller"
+echo "   2. Create PostgresDatabase resources to test the controller"
 echo ""
 echo "📖 See DEVELOPER_GUIDE.md for more information"
